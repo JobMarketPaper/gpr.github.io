@@ -44,7 +44,8 @@ https://api.fdic.gov/banks/institutions?filters=MDI_STATUS_CODE:(1+OR+2+OR+3+OR+
 python3 build_db.py --from-file ~/Downloads/fdic_mdi_institutions.csv
 ```
 
-Run the tests with `python3 -m unittest test_build_db test_link_revelio test_link_dealscan`.
+Run the tests with
+`python3 -m unittest test_build_db test_link_revelio test_link_dealscan test_link_borrowers`.
 
 ## Link to Revelio Labs (WRDS)
 
@@ -103,6 +104,38 @@ python3 link_dealscan.py --use-existing-match  # 2. pull loans for rows with acc
   the mapping it used and stops with the full column list if a required
   column is missing.
 - Outputs are licensed DealScan data and git-ignored.
+
+## Borrower ethnicity and co-ethnic lending
+
+`link_borrowers.py` matches DealScan borrowers to Revelio companies and
+measures how far each loan of an ethnic bank goes to a borrower of the
+bank's own group. Run it after `link_dealscan.py`:
+
+```sh
+python3 link_borrowers.py --match-only          # review data/dealscan_borrower_revelio_match.csv
+python3 link_borrowers.py --use-existing-match  # workforce, shares, co-ethnic measures
+```
+
+- **Borrowers:** by default, those in the ethnic banks' loans. Add `--all-us`
+  for every U.S. DealScan borrower (executives only), as a baseline for
+  comparing ethnic banks with other lenders; its files end in `_all_us`.
+- **Matching:** standardized name + HQ city, then standardized name alone
+  among U.S. Revelio companies, unique on both sides. Pass
+  `--company-mapping <folder>` to reuse a local parquet copy of
+  `company_mapping` instead of pulling U.S. companies from WRDS.
+- **Ethnicity:** borrower-year shares on December 31 among executives
+  (`exec_share_*`, Revelio seniority >= `--senior-min`, default 6 = executive
+  and senior executive; the script prints the seniority range it finds) and
+  among all U.S. employees (`share_*`).
+- **Co-ethnic measures** (`data/bank_dealscan_loans_coethnic.csv`): for each
+  loan, the borrower's share of the lending bank's group (Asian American bank
+  -> `api`, Black -> `black`, Hispanic -> `hispanic`, Native American ->
+  `native`, multi-racial -> `multiple`) among executives
+  (`coethnic_exec_share`) and all employees (`coethnic_share`), taken at the
+  December 31 before the loan (`snapshot_year`). Loans before Revelio
+  coverage have no measure.
+- Name-based ethnicity is a prediction, and DealScan's U.S. borrowers skew to
+  large firms; treat the shares as noisy measures, not classifications.
 
 ## Columns (`banks`)
 

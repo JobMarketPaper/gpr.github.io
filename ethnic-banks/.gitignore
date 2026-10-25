@@ -3,6 +3,7 @@ data/_wrds_parts/
 data/bank_revelio_match.csv
 data/bank_workforce_ethnicity_year*.csv
 data/bank_dealscan_*.csv
+data/dealscan_borrower_*.csv
 # The SQLite file gains WRDS tables after the link scripts; commit the CSV for FDIC-only data.
 data/ethnic_banks.sqlite
 __pycache__/

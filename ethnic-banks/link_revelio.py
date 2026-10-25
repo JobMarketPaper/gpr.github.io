@@ -80,9 +80,13 @@ def norm_city(u: pd.Series) -> pd.Series:
 
 
 # ---------- matching ----------
-def match(banks: pd.DataFrame, rv: pd.DataFrame) -> pd.DataFrame:
-    """One row per bank cert with the matched rcid (or NA), match tier and Revelio attributes."""
-    b = banks[["cert", "name", "website", "city"]].copy()
+def match(banks: pd.DataFrame, rv: pd.DataFrame, id_col="cert", banking=True) -> pd.DataFrame:
+    """One row per entity (`id_col`) with the matched rcid (or NA), match tier and Revelio attributes.
+
+    `banks` needs `id_col`, name and city, and optionally website. With banking=True the name-only tier
+    (T3) is limited to Revelio banking firms; otherwise it uses every Revelio company passed in.
+    """
+    b = banks[[id_col, "name", "city"]].assign(website=banks.get("website")).rename(columns={id_col: "cert"})
     b["domain"], b["name_n"], b["city_n"] = norm_domain(b.website), norm_name(b.name), norm_city(b.city)
     rv = rv.copy()
     rv["rcid"] = rv["rcid"].astype("int64")
@@ -103,10 +107,10 @@ def match(banks: pd.DataFrame, rv: pd.DataFrame) -> pd.DataFrame:
     found = [t1[["cert", "rcid", "match_tier", "n_cand"]]]
     matched = set(t1.cert)
 
-    # T2: name + city; T3: name alone among banking firms. Unique on both sides.
+    # T2: name + city; T3: name alone (among banking firms when matching banks). Unique on both sides.
     pool = rv.dropna(subset=["name_n"])
-    for keys, tier, rv_side in [(["name_n", "city_n"], "T2_name_city", pool),
-                                (["name_n"], "T3_name", pool[pool.is_bank | pool.name_n.str.contains(BANKLIKE_RE)])]:
+    t3_pool = pool[pool.is_bank | pool.name_n.str.contains(BANKLIKE_RE)] if banking else pool
+    for keys, tier, rv_side in [(["name_n", "city_n"], "T2_name_city", pool), (["name_n"], "T3_name", t3_pool)]:
         r = rv_side.dropna(subset=keys)
         r = r[r.groupby(keys)["rcid"].transform("size") == 1]
         left = b[~b.cert.isin(matched)].dropna(subset=keys)
@@ -120,8 +124,9 @@ def match(banks: pd.DataFrame, rv: pd.DataFrame) -> pd.DataFrame:
     rv_attr = rv.set_index("rcid")[["company", "url", "hq_city", "hq_country", "naics_code", "year_founded",
                                     "ultimate_parent_rcid", "ultimate_parent_company_name", "city_n"]]
     rv_attr = rv_attr[~rv_attr.index.duplicated()].add_prefix("rv_")
-    keep = [c for c in ["cert", "name", "ethnic_group", "active", "city", "state", "website"] if c in banks]
-    out = banks[keep].merge(m, on="cert", how="left").merge(rv_attr, left_on="rcid", right_index=True, how="left")
+    keep = [c for c in [id_col, "name", "ethnic_group", "active", "city", "state", "website"] if c in banks]
+    m = m.rename(columns={"cert": id_col})
+    out = banks[keep].merge(m, on=id_col, how="left").merge(rv_attr, left_on="rcid", right_index=True, how="left")
     out["rcid"] = out["rcid"].astype("Int64")
     out["domain"] = norm_domain(out.website) if "website" in out else None
     out["rcid_shared"] = out.rcid.notna() & out.duplicated("rcid", keep=False)
@@ -225,6 +230,45 @@ def user_table(db):
     return cand[0]
 
 
+def pull_workforce(db, rcids, senior_min=None):
+    """U.S. positions at `rcids` and each employee's ethnicity, as (pos, eth, has_seniority).
+
+    With `senior_min`, only positions at Revelio seniority >= senior_min are pulled.
+    """
+    has_seniority = "seniority" in set(db.describe_table(library="revelio", table="individual_positions")["name"])
+    if senior_min is not None and not has_seniority:
+        raise SystemExit("revelio.individual_positions has no seniority column, so executives cannot be selected.")
+    senior_sql = f" and seniority >= {int(senior_min)}" if senior_min is not None else ""
+    prefix = "pos" if senior_min is None else f"pos_sen{int(senior_min)}"
+    pos = pull_batches(db, rcids, BATCH_RCID, prefix, lambda q: f"""
+        select rcid, user_id, startdate, enddate{', seniority' if has_seniority else ''}
+        from revelio.individual_positions
+        where rcid in ({q}) and startdate is not null{senior_sql}
+          and (country in ({sql_list(US)}) or country is null)""")
+    if pos.empty:
+        raise SystemExit("No Revelio positions found for the matched rcids.")
+
+    ut = user_table(db)
+    kind, spec = pick_ethnicity(list(db.describe_table(library="revelio", table=ut)["name"]))
+    print(f"ethnicity from revelio.{ut}: {kind} {spec}")
+    cols = list(spec.values()) if kind == "prob" else [spec]
+    uids = pos.user_id.dropna()
+    if pd.api.types.is_numeric_dtype(uids):
+        uids = uids.astype("int64")  # "123.0" in an IN list would defeat the user_id index
+    users = pull_batches(db, sorted(uids.unique().tolist()), BATCH_USER, f"user_{ut}",
+                         lambda q: f"select user_id, {', '.join(cols)} from revelio.{ut} where user_id in ({q})")
+
+    pos["rcid"] = pos["rcid"].astype("int64")
+    pos["startdate"], pos["enddate"] = pd.to_datetime(pos.startdate), pd.to_datetime(pos.enddate)
+    return pos, ethnicity_frame(users, kind, spec), has_seniority
+
+
+def snapshot_years(pos):
+    """FIRST_YEAR through the last complete year of Revelio position data."""
+    end = pos.startdate.max()
+    return range(FIRST_YEAR, end.year + (end.month == 12))
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Link ethnic banks to Revelio and build workforce ethnicity shares.")
     ap.add_argument("--banks", type=Path, default=DATA / "ethnic_banks.csv")
@@ -258,38 +302,18 @@ def main(argv=None):
         rcids = sorted(m.rcid.dropna().astype("int64").unique().tolist())
         if not rcids:
             raise SystemExit(f"No bank is matched to a Revelio rcid in {match_path}.")
-        pos_cols = set(db.describe_table(library="revelio", table="individual_positions")["name"])
-        extra = [c for c in ("seniority",) if c in pos_cols]
-        pos = pull_batches(db, rcids, BATCH_RCID, "pos", lambda q: f"""
-            select rcid, user_id, startdate, enddate{''.join(', ' + c for c in extra)}
-            from revelio.individual_positions
-            where rcid in ({q}) and startdate is not null
-              and (country in ({sql_list(US)}) or country is null)""")
-
-        ut = user_table(db)
-        kind, spec = pick_ethnicity(list(db.describe_table(library="revelio", table=ut)["name"]))
-        print(f"ethnicity from revelio.{ut}: {kind} {spec}")
-        cols = list(spec.values()) if kind == "prob" else [spec]
-        uids = pos.user_id.dropna()
-        if pd.api.types.is_numeric_dtype(uids):
-            uids = uids.astype("int64")  # "123.0" in an IN list would defeat the user_id index
-        users = pull_batches(db, sorted(uids.unique().tolist()), BATCH_USER, f"user_{ut}",
-                             lambda q: f"select user_id, {', '.join(cols)} from revelio.{ut} where user_id in ({q})")
+        pos, eth, has_seniority = pull_workforce(db, rcids)
     finally:
         db.close()
 
-    pos["rcid"] = pos["rcid"].astype("int64")
-    pos["startdate"], pos["enddate"] = pd.to_datetime(pos.startdate), pd.to_datetime(pos.enddate)
-    end = pos.startdate.max()
-    years = range(FIRST_YEAR, end.year + (end.month == 12))
-    eth = ethnicity_frame(users, kind, spec)
+    years = snapshot_years(pos)
     link = m.dropna(subset=["rcid"])[["cert", "rcid"]].astype("int64")
 
     tables = {"revelio_match": m}
     year = link.merge(annual_shares(pos, eth, years), on="rcid")
     tables["workforce_ethnicity_year"] = year
     year.to_csv(DATA / "bank_workforce_ethnicity_year.csv", index=False)
-    if extra:
+    if has_seniority:
         sen = link.merge(annual_shares(pos.dropna(subset=["seniority"]), eth, years, by=["seniority"]), on="rcid")
         tables["workforce_ethnicity_year_seniority"] = sen
         sen.to_csv(DATA / "bank_workforce_ethnicity_year_seniority.csv", index=False)
