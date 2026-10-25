@@ -44,7 +44,38 @@ https://api.fdic.gov/banks/institutions?filters=MDI_STATUS_CODE:(1+OR+2+OR+3+OR+
 python3 build_db.py --from-file ~/Downloads/fdic_mdi_institutions.csv
 ```
 
-Run the tests with `python3 -m unittest test_build_db`.
+Run the tests with `python3 -m unittest test_build_db test_link_revelio`.
+
+## Link to Revelio Labs (WRDS)
+
+`link_revelio.py` matches each bank to its Revelio company (`rcid`) and builds
+bank-year workforce ethnicity shares. Run it where WRDS is reachable, after
+`build_db.py` (needs `pandas`, `pyarrow`, `wrds`; set `WRDS_USERNAME` or let
+`wrds` prompt):
+
+```sh
+python3 link_revelio.py --match-only          # 1. match, then review data/bank_revelio_match.csv
+python3 link_revelio.py --use-existing-match  # 2. pull positions and ethnicity for the reviewed matches
+```
+
+- **Matching** (`revelio_common.company_mapping`), in order: website domain;
+  standardized name + HQ city; standardized name alone among U.S. banking firms
+  (NAICS 522 or a bank-like name). Name matches must be unique on both sides.
+  Check the `T2`/`T3` rows, `rcid_shared` and `chk_city_agree` by hand; fix
+  `rcid` in the CSV where needed before step 2.
+- **Workforce** (`revelio.individual_positions` joined to Revelio's user
+  table): U.S. employees on December 31 of each year from 2008, counted once
+  per bank. `share_white`, `share_black`, `share_api`, `share_hispanic`,
+  `share_native`, `share_multiple` are means of Revelio's predicted ethnicity
+  probabilities; `n_with_ethnicity` is the number of employees with a
+  prediction. A second file breaks this down by Revelio seniority level.
+- The script prints mean shares by FDIC group for the latest year as a sanity
+  check (Asian American MDIs should show a high `share_api`, and so on).
+
+Outputs: `data/bank_revelio_match.csv`, `data/bank_workforce_ethnicity_year.csv`,
+`data/bank_workforce_ethnicity_year_seniority.csv`, and the same tables in
+`data/ethnic_banks.sqlite`. These are derived from licensed Revelio data and
+are git-ignored; do not commit them to this public repository.
 
 ## Columns (`banks`)
 
@@ -74,7 +105,12 @@ Run the tests with `python3 -m unittest test_build_db`.
   source for a panel.
 - **Broad groups.** The FDIC does not split "Asian or Pacific Islander
   American" (or other groups) into national origins such as Chinese, Korean or
-  Vietnamese American.
+  Vietnamese American. Revelio's ethnicity predictions use the same broad
+  groups.
+- **Revelio coverage.** Revelio sees employees with online profiles, which
+  under-covers branch and back-office staff at small banks; read
+  `n_employees` next to the FDIC office count before using shares for small
+  banks.
 - **MDIs only.** Banks that serve an ethnic community without minority
   ownership or a minority board are not designated MDIs and are not included.
   Credit unions (NCUA) are not included either.

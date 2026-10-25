@@ -1,0 +1,7 @@
+# Revelio (WRDS) data and anything derived from it is licensed: keep it out of this public repo.
+data/_revelio_parts/
+data/bank_revelio_match.csv
+data/bank_workforce_ethnicity_year*.csv
+# The SQLite file gains Revelio tables after link_revelio.py; commit the CSV for FDIC-only data.
+data/ethnic_banks.sqlite
+__pycache__/
