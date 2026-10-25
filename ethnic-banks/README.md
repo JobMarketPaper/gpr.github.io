@@ -44,7 +44,7 @@ https://api.fdic.gov/banks/institutions?filters=MDI_STATUS_CODE:(1+OR+2+OR+3+OR+
 python3 build_db.py --from-file ~/Downloads/fdic_mdi_institutions.csv
 ```
 
-Run the tests with `python3 -m unittest test_build_db test_link_revelio`.
+Run the tests with `python3 -m unittest test_build_db test_link_revelio test_link_dealscan`.
 
 ## Link to Revelio Labs (WRDS)
 
@@ -76,6 +76,33 @@ Outputs: `data/bank_revelio_match.csv`, `data/bank_workforce_ethnicity_year.csv`
 `data/bank_workforce_ethnicity_year_seniority.csv`, and the same tables in
 `data/ethnic_banks.sqlite`. These are derived from licensed Revelio data and
 are git-ignored; do not commit them to this public repository.
+
+## Link to DealScan (WRDS)
+
+`link_dealscan.py` finds the banks among LSEG DealScan lenders
+(`dealscan.dealscan`, one row per tranche x lender) and pulls their syndicated
+loan participations. Same two-step flow:
+
+```sh
+python3 link_dealscan.py --match-only          # 1. review data/bank_dealscan_lender_match.csv
+python3 link_dealscan.py --use-existing-match  # 2. pull loans for rows with accept = True
+```
+
+- **Matching**, U.S. lenders only (when DealScan reports a lender country):
+  standardized lender name = bank name (a bank may have several DealScan lender
+  ids); else lender parent = the bank's FDIC holding company, unique among the
+  banks. `accept` is False when the name is used by several DealScan lender ids
+  that no single parent ties together (e.g. "First Community Bank"); check
+  those by hand, and flip `accept` for any other row you reject.
+- **Outputs:** `data/bank_dealscan_loans.csv` (every tranche x lender row for
+  accepted lenders, with borrower name, location and SIC, amounts, spread,
+  maturity, role and lead-arranger flag) and `data/bank_dealscan_year.csv`
+  (per bank-year: tranches, deals, tranches as lead arranger, total tranche
+  amount as reported by DealScan, each tranche counted once).
+- DealScan column names are looked up on WRDS at run time; the script prints
+  the mapping it used and stops with the full column list if a required
+  column is missing.
+- Outputs are licensed DealScan data and git-ignored.
 
 ## Columns (`banks`)
 

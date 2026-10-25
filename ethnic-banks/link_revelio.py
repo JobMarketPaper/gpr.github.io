@@ -35,7 +35,7 @@ from pathlib import Path
 import pandas as pd
 
 DATA = Path(__file__).resolve().parent / "data"
-PARTS = DATA / "_revelio_parts"
+PARTS = DATA / "_wrds_parts"
 FIRST_YEAR = 2008
 BATCH_RCID, BATCH_USER = 50, 5000
 US = ["United States", "Puerto Rico", "Guam", "American Samoa", "Northern Mariana Islands", "U.S. Virgin Islands"]
