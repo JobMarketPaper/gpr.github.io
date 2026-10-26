@@ -32,6 +32,7 @@ import argparse
 import os
 import sqlite3
 import sys
+from contextlib import closing
 from pathlib import Path
 
 import pandas as pd
@@ -210,7 +211,7 @@ def main(argv=None):
 
     db_path = DATA / "ethnic_banks.sqlite"
     if db_path.exists():
-        with sqlite3.connect(db_path) as con:
+        with closing(sqlite3.connect(db_path)) as con, con:
             for name, df in {"dealscan_lender_match": lm, "dealscan_loans": loans, "dealscan_year": year}.items():
                 df.to_sql(name, con, if_exists="replace", index=False)
         print(f"added dealscan_lender_match, dealscan_loans, dealscan_year to {db_path}")

@@ -24,6 +24,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -42,6 +43,8 @@ GROUPS = [
     "Native American or Alaska Native",
     "Multi-racial",
 ]
+# Matching Revelio / HMDA / Census group, in GROUPS order (api = Asian or Pacific Islander)
+GROUP_ETH = dict(zip(GROUPS, ["black", "hispanic", "api", "native", "multiple"]))
 STATUS_CODES = {
     c: (GROUPS[(c - 1) % 5], "ownership" if c <= 5 else "board_and_community")
     for c in range(1, 11)
@@ -154,8 +157,9 @@ def get_json(url, attempts=3):
         time.sleep(2 ** (i + 1))
 
 
-def fetch_institutions(filters, api_key=None):
-    """All `institutions` records matching `filters`, trying each API base in turn."""
+def fetch(endpoint, filters, fields=None, api_key=None, sort_by="CERT"):
+    """All records of FDIC API `endpoint` matching `filters` (all fields if `fields` is None),
+    trying each API base in turn. Returns (rows, url)."""
     errors = []
     for base in API_BASES:
         rows, offset = [], 0
@@ -163,25 +167,31 @@ def fetch_institutions(filters, api_key=None):
             while True:
                 params = {
                     "filters": filters,
-                    "fields": ",".join(f for f, _, _ in FIELDS),
                     "limit": PAGE_SIZE,
                     "offset": offset,
-                    "sort_by": "CERT",
+                    "sort_by": sort_by,
                     "sort_order": "ASC",
                     "format": "json",
                 }
+                if fields:
+                    params["fields"] = ",".join(fields)
                 if api_key:
                     params["api_key"] = api_key
-                payload = get_json(f"{base}/institutions?{urllib.parse.urlencode(params)}")
+                payload = get_json(f"{base}/{endpoint}?{urllib.parse.urlencode(params)}")
                 batch = [r["data"] for r in payload["data"]]
                 rows += batch
                 offset += PAGE_SIZE
                 total = payload.get("meta", {}).get("total")
                 if not batch or (offset >= total if total is not None else len(batch) < PAGE_SIZE):
-                    return rows, f"{base}/institutions"
+                    return rows, f"{base}/{endpoint}"
         except (OSError, ValueError, KeyError) as e:
             errors.append(f"{base}: {e}")
     raise RuntimeError("Could not reach the FDIC API:\n  " + "\n  ".join(errors))
+
+
+def fetch_institutions(filters, api_key=None):
+    """All `institutions` records matching `filters`."""
+    return fetch("institutions", filters, [f for f, _, _ in FIELDS], api_key)
 
 
 def load_files(paths):
@@ -236,7 +246,7 @@ def write_outputs(banks, info, out_dir):
     db_path = out_dir / "ethnic_banks.sqlite"
     db_path.unlink(missing_ok=True)
     sql_type = {"int": "INTEGER", "text": "TEXT", "zip": "TEXT", "date": "TEXT"}
-    with sqlite3.connect(db_path) as con:
+    with closing(sqlite3.connect(db_path)) as con, con:
         cols = ", ".join(
             f"{c} {sql_type[COLUMN_TYPES[c]]}" + (" PRIMARY KEY" if c == "cert" else "")
             for c in COLUMNS

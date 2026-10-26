@@ -45,7 +45,71 @@ python3 build_db.py --from-file ~/Downloads/fdic_mdi_institutions.csv
 ```
 
 Run the tests with
-`python3 -m unittest test_build_db test_link_revelio test_link_dealscan test_link_borrowers`.
+`python3 -m unittest test_build_db test_link_revelio test_link_dealscan test_link_borrowers test_build_sod test_build_hmda`.
+
+## Branches and co-ethnic neighborhoods (FDIC SOD + Census ACS)
+
+`build_sod.py` pulls every Summary of Deposits record (branch deposits each
+June 30, 1994 on) for the banks, and measures how far each bank's deposits sit
+in co-ethnic places, from ACS 5-year table B03002 (population by Hispanic
+origin and race):
+
+```sh
+python3 build_sod.py            # county exposure, every year
+python3 build_sod.py --tracts   # also tract exposure (geocodes branches; slow the first time, then cached)
+```
+
+- `county_share_<group>`: deposit-weighted mean, over the bank's branches, of
+  the group's share of the branch county's population, using the ACS release
+  ending that year (2009 release for earlier years, latest for later ones).
+  `own_county_share` is the bank's own FDIC group. Groups: `hispanic` (any
+  race), and non-Hispanic `white`, `black`, `native`, `api` (Asian + Pacific
+  Islander), `multiple`.
+- `tract_share_<group>` / `own_tract_share` (`--tracts`): the same with 2020
+  census tracts (Census Geocoder on the SOD coordinates) and the latest ACS;
+  tract composition is one cross-section applied to every year.
+- Outputs: `data/ethnic_bank_branches.csv` (branch x year),
+  `data/bank_branch_exposure_year.csv` (bank x year). Public data.
+- Connecticut replaced its counties with planning regions in the 2022 ACS, so
+  Connecticut branches may lose county matches from then on.
+
+## Mortgage lending (HMDA)
+
+`build_hmda.py` pulls the banks' HMDA applications (2018 on) from the CFPB
+Data Browser API, with each applicant's own race and ethnicity, including the
+detailed groups HMDA has collected since 2018 (Chinese, Korean, Vietnamese,
+Filipino, Asian Indian, Japanese; Mexican, Puerto Rican, Cuban; Native
+Hawaiian, Guamanian or Chamorro, Samoan).
+
+```sh
+python3 build_hmda.py --match-only --panel 2022_public_panel.csv 2023_public_panel.csv
+python3 build_hmda.py --use-existing-match --baseline-counties 10
+```
+
+- **Lender link:** HMDA identifies lenders by LEI. The HMDA Reporter Panel
+  (CSV from the FFIEC data publication pages, 2018-2023; not produced from
+  2024) maps LEI to `respondent_rssd` = FDIC `fed_rssd`. Banks it misses, or
+  without `--panel`, are matched by standardized name to the Data Browser filer
+  list; names shared by several LEIs get `accept = False`. Review
+  `data/bank_hmda_lei_match.csv`.
+- **Applicant group** from the applicant's own codes (co-applicant ignored),
+  on the same groups as the ACS measures: `hispanic` if any Hispanic code;
+  otherwise the minority race, `multiple` for two or more minority races,
+  `white` if only white. `applicant_subgroup` is the detailed group;
+  `coethnic` = 1 when the applicant's group is the bank's.
+- **Outputs:** `data/bank_hmda_applications.parquet` (loan level),
+  `data/bank_hmda_year.csv` (applications, originations, denial rate, shares of
+  originations by group, `coethnic_orig_share`, denial rates for co-ethnic and
+  other applicants), `data/bank_hmda_subgroup_year.csv` (originations by
+  detailed group).
+- **Baseline** (`--baseline-counties N`): all lenders' applications in the N
+  counties where the banks take the most applications.
+  `expected_coethnic_share_bc` is the co-ethnic share implied by all lenders'
+  originations in the same county-years; compare it with the banks'
+  `coethnic_share_bc` there. These files are large (all lenders in big
+  counties) and cached in `data/_hmda_raw/`.
+- HMDA before 2018 has a different format and no detailed groups; it is not
+  pulled.
 
 ## Link to Revelio Labs (WRDS)
 

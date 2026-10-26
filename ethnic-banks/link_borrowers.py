@@ -28,19 +28,18 @@ import argparse
 import os
 import sqlite3
 import sys
+from contextlib import closing
 from pathlib import Path
 
 import pandas as pd
 
-from build_db import GROUPS
+from build_db import GROUP_ETH
 from link_dealscan import LIB, TABLE, id_str, resolve_columns, select_list
 from link_revelio import (BATCH_RCID, DATA, ETH, PARTS, RV_COLS, US, annual_shares, cached, match, pull_workforce,
                           snapshot_years, sql_list)
 
 SENIOR_MIN = 6
 RCID_STEP = 2_000_000
-# FDIC group -> Revelio ethnicity, in build_db.GROUPS order
-GROUP_ETH = dict(zip(GROUPS, ["black", "hispanic", "api", "native", "multiple"]))
 BORROWER_COLS = ["borrower_id", "borrower_name", "borrower_city", "borrower_state", "borrower_country"]
 
 
@@ -196,7 +195,7 @@ def main(argv=None):
 
     db_path = DATA / "ethnic_banks.sqlite"
     if db_path.exists():
-        with sqlite3.connect(db_path) as con:
+        with closing(sqlite3.connect(db_path)) as con, con:
             for name, df in tables.items():
                 df.to_sql(name, con, if_exists="replace", index=False)
         print(f"added {', '.join(tables)} to {db_path}")

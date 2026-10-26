@@ -4,6 +4,10 @@ data/bank_revelio_match.csv
 data/bank_workforce_ethnicity_year*.csv
 data/bank_dealscan_*.csv
 data/dealscan_borrower_*.csv
+# Large public-data caches and loan-level files.
+data/_hmda_raw/
+data/_geocode_cache.csv
+data/bank_hmda_applications.parquet
 # The SQLite file gains WRDS tables after the link scripts; commit the CSV for FDIC-only data.
 data/ethnic_banks.sqlite
 __pycache__/
